@@ -5,7 +5,7 @@
 
 
 enum {
-    STACK_CHUNK_SIZE = 10
+    STACK_HOLDER_SIZE = 10
 };
 
 // data structure
@@ -28,7 +28,7 @@ struct stack_holder {
     struct stack_holder* prev;
     struct stack_holder* next;
     unsigned int stack_count;
-    stack_t* stacks[STACK_CHUNK_SIZE];
+    stack_t* stacks[STACK_HOLDER_SIZE];
 };
 
 typedef struct stack_holder stack_holder_t;
@@ -49,16 +49,16 @@ stack_info_t get_stack_info(const hstack_t hstack) {
     if (hstack < 0) {
         return result;
     }
-    unsigned int chunk_id = hstack / STACK_CHUNK_SIZE;
-    unsigned int stack_id = hstack % STACK_CHUNK_SIZE;
+    unsigned int holder_id = hstack / STACK_HOLDER_SIZE;
+    unsigned int stack_id = hstack % STACK_HOLDER_SIZE;
     stack_holder_t* sh_ptr = &stack_holder;
 
-    while (chunk_id != 0) {
+    while (holder_id != 0) {
         if (!sh_ptr->next) {
             return result;
         }
         sh_ptr = sh_ptr->next;
-        --chunk_id;
+        --holder_id;
     }
     result.stack_holder_ptr = sh_ptr;
     result.stack_ptr = sh_ptr->stacks[stack_id];
@@ -78,15 +78,16 @@ hstack_t stack_new(void) {
     }
 
     stack_holder_t* sh_ptr = &stack_holder;
-    unsigned int chunk_id = 0;
+    unsigned int holder_id = 0;
     unsigned int stack_id = 0;
 
-    // find chunk_id or create new
-    while (sh_ptr->stack_count == STACK_CHUNK_SIZE) {
-        ++chunk_id;
+    // find holder_id or create new
+    while (sh_ptr->stack_count == STACK_HOLDER_SIZE) {
+        ++holder_id;
         if (!sh_ptr->next) {
             sh_ptr->next = calloc(1, sizeof(stack_holder));
             if (!sh_ptr->next) {
+                free(stack);
                 return -1;
             }
             sh_ptr->next->prev = sh_ptr;
@@ -96,14 +97,14 @@ hstack_t stack_new(void) {
         sh_ptr = sh_ptr->next;
     }
     // find stack_id
-    for (; stack_id < STACK_CHUNK_SIZE; ++stack_id) {
+    for (; stack_id < STACK_HOLDER_SIZE; ++stack_id) {
         if (!sh_ptr->stacks[stack_id]) {
             sh_ptr->stacks[stack_id] = stack;
             ++sh_ptr->stack_count;
             break;
         }
     }
-    return chunk_id * STACK_CHUNK_SIZE + stack_id;
+    return holder_id * STACK_HOLDER_SIZE + stack_id;
 }
 
 void stack_free(const hstack_t hstack) {
@@ -120,7 +121,7 @@ void stack_free(const hstack_t hstack) {
         stack_ptr->top_ptr = prev;
     }
     free(stack_ptr);
-    si.stack_holder_ptr->stacks[hstack % STACK_CHUNK_SIZE] = NULL;
+    si.stack_holder_ptr->stacks[hstack % STACK_HOLDER_SIZE] = NULL;
     --si.stack_holder_ptr->stack_count;
 
     // free stack_holder if it is empty and is the last
