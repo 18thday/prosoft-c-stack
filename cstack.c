@@ -5,7 +5,7 @@
 
 
 enum {
-    STACK_HOLDER_SIZE = 10
+    STACK_HOLDER_MIN_SIZE = 4
 };
 
 // data structure
@@ -25,49 +25,38 @@ struct stack {
 typedef struct stack stack_t;
 
 struct stack_holder {
-    struct stack_holder* prev;
-    struct stack_holder* next;
-    unsigned int stack_count;
-    stack_t* stacks[STACK_HOLDER_SIZE];
+    unsigned int size;
+    unsigned int capacity;
+    unsigned int last_stack_number;
+    stack_t* stacks[0];
 };
 
 typedef struct stack_holder stack_holder_t;
 
-struct stack_info {
-    stack_holder_t* stack_holder_ptr;
-    stack_t* stack_ptr;
-};
-
-typedef struct stack_info stack_info_t;
-
 //  variables
-stack_holder_t stack_holder = {};
+stack_holder_t* stack_holder_ptr = NULL;
 
 // inner functions
-stack_info_t get_stack_info(const hstack_t hstack) {
-    stack_info_t result = {NULL, NULL};
-    if (hstack < 0) {
-        return result;
+stack_t* get_stack_ptr(const hstack_t hstack) {
+    if (hstack < 0 || !stack_holder_ptr || stack_holder_ptr->capacity <= (unsigned)hstack) {
+        return NULL;
     }
-    unsigned int holder_id = hstack / STACK_HOLDER_SIZE;
-    unsigned int stack_id = hstack % STACK_HOLDER_SIZE;
-    stack_holder_t* sh_ptr = &stack_holder;
 
-    while (holder_id != 0) {
-        if (!sh_ptr->next) {
-            return result;
-        }
-        sh_ptr = sh_ptr->next;
-        --holder_id;
-    }
-    result.stack_holder_ptr = sh_ptr;
-    result.stack_ptr = sh_ptr->stacks[stack_id];
-    return result;
+    return stack_holder_ptr->stacks[hstack];
 }
 
-stack_t* get_stack_ptr(const hstack_t hstack) {
-    stack_info_t si = get_stack_info(hstack);
-    return si.stack_ptr;
+void resize_stack_holder(stack_holder_t** sh, unsigned size) {
+    stack_holder_t* new_sh = calloc(1, sizeof(stack_holder_t) + size * sizeof(stack_t*));
+    if (!new_sh) {
+        return;
+    }
+
+    memcpy(new_sh, *sh, sizeof(stack_holder_t) + ((*sh)->capacity < size ? (*sh)->capacity : size) * sizeof(stack_t*));
+    new_sh->capacity = size;
+
+    stack_holder_t* old_sh = *sh;
+    *sh = new_sh;
+    free(old_sh);
 }
 
 // user interface
@@ -77,40 +66,43 @@ hstack_t stack_new(void) {
         return -1;
     }
 
-    stack_holder_t* sh_ptr = &stack_holder;
-    unsigned int holder_id = 0;
-    unsigned int stack_id = 0;
+    if (stack_holder_ptr == NULL) {
+        stack_holder_ptr = calloc(1, sizeof(stack_holder_t) + STACK_HOLDER_MIN_SIZE * sizeof(stack_t*));
+        if (!stack_holder_ptr) {
+            free(stack);
+            return -1;
+        }
+        stack_holder_ptr->capacity = STACK_HOLDER_MIN_SIZE;
+    }
 
-    // find holder_id or create new
-    while (sh_ptr->stack_count == STACK_HOLDER_SIZE) {
-        ++holder_id;
-        if (!sh_ptr->next) {
-            sh_ptr->next = calloc(1, sizeof(stack_holder));
-            if (!sh_ptr->next) {
-                free(stack);
-                return -1;
+    if (stack_holder_ptr->capacity == stack_holder_ptr->size) {
+        stack_holder_t* prev_sh_ptr = stack_holder_ptr;
+        resize_stack_holder(&stack_holder_ptr, 2 * stack_holder_ptr->capacity);
+        if (prev_sh_ptr == stack_holder_ptr) {
+            return -1;
+        }
+    }
+
+    unsigned stack_id = stack_holder_ptr->last_stack_number;
+    if (stack_id != stack_holder_ptr->capacity) {
+        ++stack_holder_ptr->last_stack_number;
+    } else {
+        stack_id = 0;
+        while (stack_id < stack_holder_ptr->capacity) {
+            if (!stack_holder_ptr->stacks[stack_id]) {
+                break;
             }
-            sh_ptr->next->prev = sh_ptr;
-            sh_ptr = sh_ptr->next;
-            break;
-        }
-        sh_ptr = sh_ptr->next;
-    }
-    // find stack_id
-    for (; stack_id < STACK_HOLDER_SIZE; ++stack_id) {
-        if (!sh_ptr->stacks[stack_id]) {
-            sh_ptr->stacks[stack_id] = stack;
-            ++sh_ptr->stack_count;
-            break;
+            ++stack_id;
         }
     }
-    return holder_id * STACK_HOLDER_SIZE + stack_id;
+
+    stack_holder_ptr->stacks[stack_id] = stack;
+    ++stack_holder_ptr->size;
+    return stack_id;
 }
 
 void stack_free(const hstack_t hstack) {
-    stack_info_t si = get_stack_info(hstack);
-    stack_t* stack_ptr = si.stack_ptr;
-
+    stack_t* stack_ptr = get_stack_ptr(hstack);
     if (!stack_ptr) {
         return;
     }
@@ -121,23 +113,20 @@ void stack_free(const hstack_t hstack) {
         stack_ptr->top_ptr = prev;
     }
     free(stack_ptr);
-    si.stack_holder_ptr->stacks[hstack % STACK_HOLDER_SIZE] = NULL;
-    --si.stack_holder_ptr->stack_count;
-
-    // free stack_holder if it is empty and is the last
-    while (si.stack_holder_ptr->stack_count == 0 &&
-           si.stack_holder_ptr != &stack_holder &&
-           !si.stack_holder_ptr->next) {
-        stack_holder_t* sh_prev = si.stack_holder_ptr->prev;
-        sh_prev->next = NULL;
-        free(si.stack_holder_ptr);
-        si.stack_holder_ptr = sh_prev;
+    stack_holder_ptr->stacks[hstack] = NULL;
+    --stack_holder_ptr->size;
+    if ((unsigned)hstack == stack_holder_ptr->last_stack_number) {
+        --stack_holder_ptr->last_stack_number;
+        if (STACK_HOLDER_MIN_SIZE < stack_holder_ptr->capacity &&
+            stack_holder_ptr->last_stack_number < stack_holder_ptr->capacity / 3) {
+            resize_stack_holder(&stack_holder_ptr, stack_holder_ptr->capacity / 2);
+        }
     }
 }
 
 int stack_valid_handler(const hstack_t hstack) {
-    stack_t* stack_ptr = get_stack_ptr(hstack);
-    return (stack_ptr) ? 0 : 1;
+    stack_t* stack = get_stack_ptr(hstack);
+    return (stack) ? 0 : 1;
 }
 
 unsigned int stack_size(const hstack_t hstack) {
